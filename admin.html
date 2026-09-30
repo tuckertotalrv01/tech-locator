@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Update Location</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; }
+    button { padding: 1rem 2rem; font-size: 1.2rem; background: #28a745; color: white; border: none; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Update Technician Location</h2>
+  <button onclick="sendLocation()">Update My Location</button>
+  <p id="status"></p>
+
+  <script>
+    // Replace with your Firebase Realtime Database URL
+    const FIREBASE_URL = "https://tuckertotalrvtechlocator-default-rtdb/firebaseio.com/location.json";
+
+    function sendLocation() {
+      const status = document.getElementById("status");
+      if (!navigator.geolocation) {
+        status.innerText = "Geolocation not supported.";
+        return;
+      }
+
+      status.innerText = "Getting GPS coordinates...";
+
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+
+          // Fetch city name via reverse geocoding
+          try {
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
+            const geoData = await geoRes.json();
+            const address = geoData.address || {};
+            const city = address.city || address.town || address.village || address.municipality || address.county || "Unknown area";
+            const state = address.state ? `, ${address.state}` : "";
+
+            const payload = {
+              city: `${city}${state}`,
+              lat: lat,
+              lon: lon,
+              timestamp: new Date().toISOString()
+            };
+
+            // Push payload to Firebase
+            await fetch(FIREBASE_URL, {
+              method: "PUT",
+              body: JSON.stringify(payload)
+            });
+
+            status.innerText = `Successfully updated location to: ${city}${state}`;
+          } catch (err) {
+            status.innerText = "Error updating location.";
+            console.error(err);
+          }
+        },
+        (err) => { status.innerText = "Error getting GPS: " + err.message; },
+        { enableHighAccuracy: true }
+      );
+    }
+  </script>
+</body>
+</html>
