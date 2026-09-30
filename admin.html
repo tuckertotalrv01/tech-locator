@@ -31,29 +31,40 @@
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          status.innerText = "Finding nearest major city...";
+          status.innerText = "Finding nearest major incorporated city...";
 
           try {
-            // Zoom=8 forces Nominatim to pull broader metro/city areas (e.g. Joliet/Shorewood)
-            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=8`);
+            // Fetch administrative hierarchy to isolate incorporated city/village entities
+            const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
             const geoData = await geoRes.json();
             
-            const addr = geoData.address || {};
-            
-            // Prioritize major city or town, avoiding minor local townships
-            let majorCity = addr.city || addr.town || addr.municipality;
+            let majorCity = "";
 
-            // Fallback: If in an unincorporated area, query BigDataCloud for the nearest principal administrative city
-            if (!majorCity) {
-              const fallbackRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
-              const fallbackData = await fallbackRes.json();
-              majorCity = fallbackData.city || fallbackData.locality || addr.county || "Unknown Area";
+            // Search administrative levels for incorporated municipalities (City, Village, Town)
+            if (geoData.localityInfo && geoData.localityInfo.administrative) {
+              const adminLevels = geoData.localityInfo.administrative;
+              
+              // Filter out entries with "Township" to grab true city names
+              const validCities = adminLevels.filter(item => 
+                item.name && 
+                !item.name.toLowerCase().includes("township") && 
+                !item.name.toLowerCase().includes("county") &&
+                item.order >= 3
+              );
+
+              if (validCities.length > 0) {
+                // Select the most relevant incorporated city/village entry
+                majorCity = validCities[validCities.length - 1].name;
+              }
             }
 
-            // Strip township naming if present
-            majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '');
+            // Fallback check
+            if (!majorCity) {
+              majorCity = geoData.city || geoData.locality || "Unknown Location";
+              majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '');
+            }
 
-            const state = addr.state_code ? `, ${addr.state_code.toUpperCase()}` : (addr.state ? `, ${addr.state}` : "");
+            const state = geoData.principalSubdivisionCode ? `, ${geoData.principalSubdivisionCode.replace('US-', '')}` : "";
             const locationString = `${majorCity}${state}`;
 
             status.innerText = `Updating database to: ${locationString}...`;
