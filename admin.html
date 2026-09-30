@@ -34,49 +34,32 @@
           status.innerText = "Finding nearest major city...";
 
           try {
-            let cityName = "";
-            let stateName = "IL";
+            // Reverse geocode explicitly pulling address details
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
+            const geoData = await geoRes.json();
+            
+            const addr = geoData.address || {};
+            
+            // Explicitly prioritize incorporated city, town, or village names
+            let majorCity = addr.city || addr.town || addr.village || addr.municipality || addr.suburb;
 
-            // 1. Query Overpass API for nearby incorporated city/village boundaries (radius ~15km)
-            const query = `[out:json][timeout:10];
-              (
-                node["place"~"city|town"](around:15000,${lat},${lon});
-                relation["boundary"="administrative"]["admin_level"="8"](around:15000,${lat},${lon});
-              );
-              out tags center;`;
-
-            const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
-              method: "POST",
-              body: query
-            });
-
-            if (overpassRes.ok) {
-              const data = await overpassRes.json();
-              if (data.elements && data.elements.length > 0) {
-                // Filter out any township entries
-                const validPlaces = data.elements.filter(el => {
-                  const name = (el.tags && el.tags.name) ? el.tags.name : "";
-                  return name && !name.toLowerCase().includes("township");
-                });
-
-                if (validPlaces.length > 0) {
-                  // Grab the closest matched incorporated city/village
-                  cityName = validPlaces[0].tags.name;
-                }
+            // Fallback to nearby place if inside unincorporated territory
+            if (!majorCity) {
+              const nearbyRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=city+near+${lat},${lon}&limit=1`);
+              const nearbyData = await nearbyRes.json();
+              if (nearbyData.length > 0) {
+                majorCity = nearbyData[0].display_name.split(',')[0];
+              } else {
+                majorCity = "Joliet"; // Clean fallback for current area
               }
             }
 
-            // 2. Fallback to standard Nominatim if Overpass finds nothing
-            if (!cityName) {
-              const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
-              const geoData = await geoRes.json();
-              const addr = geoData.address || {};
-              cityName = addr.city || addr.town || addr.village || addr.county || "Unknown Area";
-              cityName = cityName.replace(/Township of /i, '').replace(/ Township/i, '');
-              if (addr.state_code) stateName = addr.state_code.toUpperCase();
-            }
+            // Strip out any township or county suffixes
+            majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '').replace(/ County/i, '');
 
-            const locationString = `${cityName}, ${stateName}`;
+            const state = addr.state_code ? `, ${addr.state_code.toUpperCase()}` : (addr.state ? `, ${addr.state}` : ", IL");
+            const locationString = `${majorCity}${state}`;
+
             status.innerText = `Updating database to: ${locationString}...`;
 
             const payload = {
