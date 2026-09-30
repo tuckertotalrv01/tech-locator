@@ -34,7 +34,7 @@
           status.innerText = "Coordinates found. Converting to city name...";
 
           try {
-            // Reverse geocode via BigDataCloud (CORS friendly) or OpenStreetMap
+            // Free reverse geocoding API with full browser CORS support
             const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
             const geoData = await geoRes.json();
             
@@ -63,7 +63,7 @@
               status.innerText = `Firebase Error: ${fbRes.status} ${fbRes.statusText}`;
             }
           } catch (err) {
-            status.innerText = "Fetch Error: " + err.message;
+            status.innerText = "Error: " + err.message;
             console.error(err);
           }
         },
