@@ -31,30 +31,43 @@
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          status.innerText = "Coordinates found. Finding nearest major city...";
+          status.innerText = "Finding nearest major city boundary...";
 
           try {
-            const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
-            const geoData = await geoRes.json();
-            
-            // Search for primary city in admin hierarchy, skipping townships/minor subdivisions
-            let majorCity = geoData.city;
+            let majorCity = "";
+            let state = "";
 
-            if (!majorCity && geoData.localityInfo && geoData.localityInfo.administrative) {
-              // Look through administrative levels for an incorporated city/place
-              const adminList = geoData.localityInfo.administrative;
-              const cityLevel = adminList.find(item => item.adminLevel === 8 || item.adminLevel === 7 || item.order === 4);
-              if (cityLevel) {
-                majorCity = cityLevel.name;
+            // 1. Query Overpass API for nearby city/town boundary
+            const overpassQuery = `[out:json];is_in(${lat},${lon});area[boundary=administrative][admin_level~"8|7"]['name'];out;`;
+            const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
+              method: "POST",
+              body: overpassQuery
+            });
+
+            if (overpassRes.ok) {
+              const overpassData = await overpassRes.json();
+              if (overpassData.elements && overpassData.elements.length > 0) {
+                // Filter out entries containing "Township" to grab actual cities/villages
+                const cities = overpassData.elements.filter(el => 
+                  el.tags && el.tags.name && !el.tags.name.toLowerCase().includes("township")
+                );
+                if (cities.length > 0) {
+                  majorCity = cities[0].tags.name;
+                }
               }
             }
 
-            // Fallback if no specific city level is tagged
+            // 2. Fallback to BigDataCloud if Overpass returns nothing
+            const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+            const geoData = await geoRes.json();
+
             if (!majorCity) {
-              majorCity = geoData.locality || geoData.principalSubdivision || "Unknown Area";
+              majorCity = geoData.city || geoData.locality || "Unknown Location";
+              // Clean up township prefix/suffix if present
+              majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '');
             }
 
-            const state = geoData.principalSubdivisionCode ? `, ${geoData.principalSubdivisionCode.replace('US-', '')}` : "";
+            state = geoData.principalSubdivisionCode ? `, ${geoData.principalSubdivisionCode.replace('US-', '')}` : "";
             const locationString = `${majorCity}${state}`;
 
             status.innerText = `Updating database to: ${locationString}...`;
