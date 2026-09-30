@@ -31,16 +31,31 @@
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          status.innerText = "Coordinates found. Converting to city name...";
+          status.innerText = "Coordinates found. Finding nearest major city...";
 
           try {
-            // Free reverse geocoding API with full browser CORS support
             const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
             const geoData = await geoRes.json();
             
-            const city = geoData.city || geoData.locality || geoData.principalSubdivision || "Unknown Location";
+            // Search for primary city in admin hierarchy, skipping townships/minor subdivisions
+            let majorCity = geoData.city;
+
+            if (!majorCity && geoData.localityInfo && geoData.localityInfo.administrative) {
+              // Look through administrative levels for an incorporated city/place
+              const adminList = geoData.localityInfo.administrative;
+              const cityLevel = adminList.find(item => item.adminLevel === 8 || item.adminLevel === 7 || item.order === 4);
+              if (cityLevel) {
+                majorCity = cityLevel.name;
+              }
+            }
+
+            // Fallback if no specific city level is tagged
+            if (!majorCity) {
+              majorCity = geoData.locality || geoData.principalSubdivision || "Unknown Area";
+            }
+
             const state = geoData.principalSubdivisionCode ? `, ${geoData.principalSubdivisionCode.replace('US-', '')}` : "";
-            const locationString = `${city}${state}`;
+            const locationString = `${majorCity}${state}`;
 
             status.innerText = `Updating database to: ${locationString}...`;
 
