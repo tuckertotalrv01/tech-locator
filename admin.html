@@ -31,43 +31,27 @@
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          status.innerText = "Finding nearest major city boundary...";
+          status.innerText = "Finding nearest city area...";
 
           try {
-            let majorCity = "";
-            let state = "";
-
-            // 1. Query Overpass API for nearby city/town boundary
-            const overpassQuery = `[out:json];is_in(${lat},${lon});area[boundary=administrative][admin_level~"8|7"]['name'];out;`;
-            const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
-              method: "POST",
-              body: overpassQuery
-            });
-
-            if (overpassRes.ok) {
-              const overpassData = await overpassRes.json();
-              if (overpassData.elements && overpassData.elements.length > 0) {
-                // Filter out entries containing "Township" to grab actual cities/villages
-                const cities = overpassData.elements.filter(el => 
-                  el.tags && el.tags.name && !el.tags.name.toLowerCase().includes("township")
-                );
-                if (cities.length > 0) {
-                  majorCity = cities[0].tags.name;
-                }
-              }
-            }
-
-            // 2. Fallback to BigDataCloud if Overpass returns nothing
-            const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+            // Zoom=10 focuses reverse geocoding on the broader city level rather than micro-features
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
             const geoData = await geoRes.json();
+            
+            const addr = geoData.address || {};
+            
+            // Prioritize incorporated city/town/village, ignoring townships and small island tags
+            let majorCity = addr.city || addr.town || addr.village || addr.municipality;
 
+            // Fallback to county if outside defined city limits
             if (!majorCity) {
-              majorCity = geoData.city || geoData.locality || "Unknown Location";
-              // Clean up township prefix/suffix if present
-              majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '');
+              majorCity = addr.county || "Unknown Area";
             }
 
-            state = geoData.principalSubdivisionCode ? `, ${geoData.principalSubdivisionCode.replace('US-', '')}` : "";
+            // Clean up any "Township" verbiage if it slips through
+            majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '');
+
+            const state = addr.state_code ? `, ${addr.state_code.toUpperCase()}` : (addr.state ? `, ${addr.state}` : "");
             const locationString = `${majorCity}${state}`;
 
             status.innerText = `Updating database to: ${locationString}...`;
