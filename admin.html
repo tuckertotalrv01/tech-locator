@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Update Location</title>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; }
-    button { padding: 1rem 2rem; font-size: 1.2rem; background: #28a745; color: white; border: none; border-radius: 8px; }
+    body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; background: #f9f9f9; }
+    button { padding: 1rem 2rem; font-size: 1.2rem; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; }
+    #status { margin-top: 1.5rem; font-weight: bold; font-size: 1.1rem; }
   </style>
 </head>
 <body>
@@ -15,59 +16,59 @@
   <p id="status"></p>
 
   <script>
-    // Replace with your Firebase Realtime Database URL
-    const FIREBASE_URL = "https://tuckertotalrvtechlocator-default-rtdb/firebaseio.com/location.json";
+    const FIREBASE_URL = "https://tuckertotalrvtechlocator-default-rtdb.firebaseio.com/location.json";
 
     function sendLocation() {
       const status = document.getElementById("status");
       if (!navigator.geolocation) {
-        status.innerText = "Geolocation not supported.";
+        status.innerText = "Geolocation not supported by browser.";
         return;
       }
 
-      status.innerText = "Getting GPS coordinates...";
+      status.innerText = "Acquiring GPS coordinates...";
 
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
+          status.innerText = "Coordinates found. Converting to city name...";
 
-          // Fetch city name via reverse geocoding
           try {
-            const geoRes = await fetch(
-  `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`,
-  {
-    headers: {
-      'User-Agent': 'TuckerTotalRV-TechLocator/1.0 (info@tuckertotalrv.com)'
-    }
-  }
-);
+            // Reverse geocode via BigDataCloud (CORS friendly) or OpenStreetMap
+            const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
             const geoData = await geoRes.json();
-            const address = geoData.address || {};
-            const city = address.city || address.town || address.village || address.municipality || address.county || "Unknown area";
-            const state = address.state ? `, ${address.state}` : "";
+            
+            const city = geoData.city || geoData.locality || geoData.principalSubdivision || "Unknown Location";
+            const state = geoData.principalSubdivisionCode ? `, ${geoData.principalSubdivisionCode.replace('US-', '')}` : "";
+            const locationString = `${city}${state}`;
+
+            status.innerText = `Updating database to: ${locationString}...`;
 
             const payload = {
-              city: `${city}${state}`,
+              city: locationString,
               lat: lat,
               lon: lon,
               timestamp: new Date().toISOString()
             };
 
-            // Push payload to Firebase
-            await fetch(FIREBASE_URL, {
+            const fbRes = await fetch(FIREBASE_URL, {
               method: "PUT",
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify(payload)
             });
 
-            status.innerText = `Successfully updated location to: ${city}${state}`;
+            if (fbRes.ok) {
+              status.innerText = `Success! Location set to: ${locationString}`;
+            } else {
+              status.innerText = `Firebase Error: ${fbRes.status} ${fbRes.statusText}`;
+            }
           } catch (err) {
-            status.innerText = "Error updating location.";
+            status.innerText = "Fetch Error: " + err.message;
             console.error(err);
           }
         },
-        (err) => { status.innerText = "Error getting GPS: " + err.message; },
-        { enableHighAccuracy: true }
+        (err) => { status.innerText = "GPS Permission Error: " + err.message; },
+        { enableHighAccuracy: true, timeout: 15000 }
       );
     }
   </script>
