@@ -31,24 +31,26 @@
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          status.innerText = "Finding nearest city area...";
+          status.innerText = "Finding nearest major city...";
 
           try {
-            // Zoom=10 focuses reverse geocoding on the broader city level rather than micro-features
-            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
+            // Zoom=8 forces Nominatim to pull broader metro/city areas (e.g. Joliet/Shorewood)
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=8`);
             const geoData = await geoRes.json();
             
             const addr = geoData.address || {};
             
-            // Prioritize incorporated city/town/village, ignoring townships and small island tags
-            let majorCity = addr.city || addr.town || addr.village || addr.municipality;
+            // Prioritize major city or town, avoiding minor local townships
+            let majorCity = addr.city || addr.town || addr.municipality;
 
-            // Fallback to county if outside defined city limits
+            // Fallback: If in an unincorporated area, query BigDataCloud for the nearest principal administrative city
             if (!majorCity) {
-              majorCity = addr.county || "Unknown Area";
+              const fallbackRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+              const fallbackData = await fallbackRes.json();
+              majorCity = fallbackData.city || fallbackData.locality || addr.county || "Unknown Area";
             }
 
-            // Clean up any "Township" verbiage if it slips through
+            // Strip township naming if present
             majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '');
 
             const state = addr.state_code ? `, ${addr.state_code.toUpperCase()}` : (addr.state ? `, ${addr.state}` : "");
