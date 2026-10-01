@@ -31,35 +31,45 @@
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          status.innerText = "Finding nearest major city...";
+          status.innerText = "Searching for nearest major city...";
 
           try {
-            // Reverse geocode explicitly pulling address details
-            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
-            const geoData = await geoRes.json();
-            
-            const addr = geoData.address || {};
-            
-            // Explicitly prioritize incorporated city, town, or village names
-            let majorCity = addr.city || addr.town || addr.village || addr.municipality || addr.suburb;
+            let nearestCity = "";
+            let stateCode = "IL";
 
-            // Fallback to nearby place if inside unincorporated territory
-            if (!majorCity) {
-              const nearbyRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=city+near+${lat},${lon}&limit=1`);
-              const nearbyData = await nearbyRes.json();
-              if (nearbyData.length > 0) {
-                majorCity = nearbyData[0].display_name.split(',')[0];
-              } else {
-                majorCity = "Joliet"; // Clean fallback for current area
+            // 1. Search OpenStreetMap specifically for places tagged as CITY near current coordinates
+            const citySearchRes = await fetch(
+              `https://nominatim.openstreetmap.org/search?format=json&q=city&bounded=1&viewbox=${lon-0.35},${lat+0.35},${lon+0.35},${lat-0.35}&limit=5`
+            );
+            const citySearchData = await citySearchRes.json();
+
+            if (citySearchData && citySearchData.length > 0) {
+              // Filter out entries containing township, village, or county
+              const cityMatches = citySearchData.filter(item => {
+                const name = item.display_name.toLowerCase();
+                return !name.includes("township") && !name.includes("county") && !name.includes("village");
+              });
+
+              if (cityMatches.length > 0) {
+                // Grab the primary city name (first part before the comma)
+                nearestCity = cityMatches[0].display_name.split(',')[0].trim();
               }
             }
 
-            // Strip out any township or county suffixes
-            majorCity = majorCity.replace(/Township of /i, '').replace(/ Township/i, '').replace(/ County/i, '');
+            // 2. Fallback: Reverse geocode with zoom=5 to pull regional city hub
+            if (!nearestCity) {
+              const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=5`);
+              const geoData = await geoRes.json();
+              const addr = geoData.address || {};
 
-            const state = addr.state_code ? `, ${addr.state_code.toUpperCase()}` : (addr.state ? `, ${addr.state}` : ", IL");
-            const locationString = `${majorCity}${state}`;
+              nearestCity = addr.city || addr.town || "Joliet";
+              if (addr.state_code) stateCode = addr.state_code.toUpperCase();
+            }
 
+            // Clean up any stray township or village labels
+            nearestCity = nearestCity.replace(/Township of /i, '').replace(/ Township/i, '').replace(/ Village/i, '');
+
+            const locationString = `${nearestCity}, ${stateCode}`;
             status.innerText = `Updating database to: ${locationString}...`;
 
             const payload = {
