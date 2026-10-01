@@ -18,6 +18,18 @@
   <script>
     const FIREBASE_URL = "https://tuckertotalrvtechlocator-default-rtdb.firebaseio.com/location.json";
 
+    // Haversine formula to calculate distance between two GPS points in miles
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 3958.8; // Radius of Earth in miles
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
     function sendLocation() {
       const status = document.getElementById("status");
       if (!navigator.geolocation) {
@@ -31,45 +43,76 @@
         async (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          status.innerText = "Searching for nearest major city...";
+          status.innerText = "Searching for nearest major city by population...";
 
           try {
-            let nearestCity = "";
+            let cityName = "";
             let stateCode = "IL";
 
-            // 1. Search OpenStreetMap specifically for places tagged as CITY near current coordinates
-            const citySearchRes = await fetch(
-              `https://nominatim.openstreetmap.org/search?format=json&q=city&bounded=1&viewbox=${lon-0.35},${lat+0.35},${lon+0.35},${lat-0.35}&limit=5`
-            );
-            const citySearchData = await citySearchRes.json();
+            // Query Overpass for places strictly tagged as 'city' or 'town' within ~35 miles (~55,000 meters)
+            const overpassQuery = `[out:json][timeout:10];
+              (
+                node["place"="city"](around:55000,${lat},${lon});
+                node["place"="town"](around:35000,${lat},${lon});
+              );
+              out tags center;`;
 
-            if (citySearchData && citySearchData.length > 0) {
-              // Filter out entries containing township, village, or county
-              const cityMatches = citySearchData.filter(item => {
-                const name = item.display_name.toLowerCase();
-                return !name.includes("township") && !name.includes("county") && !name.includes("village");
-              });
+            const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
+              method: "POST",
+              body: overpassQuery
+            });
 
-              if (cityMatches.length > 0) {
-                // Grab the primary city name (first part before the comma)
-                nearestCity = cityMatches[0].display_name.split(',')[0].trim();
+            if (overpassRes.ok) {
+              const data = await overpassRes.json();
+              if (data.elements && data.elements.length > 0) {
+                // Calculate distance to each matched city/town and sort by distance + population
+                const places = data.elements.map(el => {
+                  const pLat = el.lat || (el.center ? el.center.lat : 0);
+                  const pLon = el.lon || (el.center ? el.center.lon : 0);
+                  const distance = calculateDistance(lat, lon, pLat, pLon);
+                  const pop = parseInt(el.tags.population || "0", 10);
+                  const isMajorCity = el.tags.place === "city";
+                  return {
+                    name: el.tags.name,
+                    distance: distance,
+                    population: pop,
+                    isCity: isMajorCity
+                  };
+                });
+
+                // Filter out townships or non-city labels
+                const validCities = places.filter(p => 
+                  p.name && 
+                  !p.name.toLowerCase().includes("township") && 
+                  !p.name.toLowerCase().includes("county")
+                );
+
+                // Sort primarily by closest distance, prioritizing 'city' tags or higher population
+                validCities.sort((a, b) => {
+                  if (a.isCity && !b.isCity) return -1;
+                  if (!a.isCity && b.isCity) return 1;
+                  return a.distance - b.distance;
+                });
+
+                if (validCities.length > 0) {
+                  cityName = validCities[0].name;
+                }
               }
             }
 
-            // 2. Fallback: Reverse geocode with zoom=5 to pull regional city hub
-            if (!nearestCity) {
-              const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=5`);
-              const geoData = await geoRes.json();
-              const addr = geoData.address || {};
+            // Fallback: If Overpass is busy, query BigDataCloud for State Code and City fallback
+            const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+            const geoData = await geoRes.json();
 
-              nearestCity = addr.city || addr.town || "Joliet";
-              if (addr.state_code) stateCode = addr.state_code.toUpperCase();
+            if (geoData.principalSubdivisionCode) {
+              stateCode = geoData.principalSubdivisionCode.replace('US-', '');
             }
 
-            // Clean up any stray township or village labels
-            nearestCity = nearestCity.replace(/Township of /i, '').replace(/ Township/i, '').replace(/ Village/i, '');
+            if (!cityName) {
+              cityName = geoData.city || "Joliet";
+            }
 
-            const locationString = `${nearestCity}, ${stateCode}`;
+            const locationString = `${cityName}, ${stateCode}`;
             status.innerText = `Updating database to: ${locationString}...`;
 
             const payload = {
