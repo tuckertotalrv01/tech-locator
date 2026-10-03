@@ -3,34 +3,114 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Update Location</title>
+  <title>Update Location - Admin</title>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; background: #f9f9f9; }
-    button { padding: 1rem 2rem; font-size: 1.2rem; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; }
-    #status { margin-top: 1.5rem; font-weight: bold; font-size: 1.1rem; }
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 2rem;
+      background: #f9f9f9;
+      margin: 0;
+    }
+    .card {
+      background: #ffffff;
+      padding: 2rem;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 450px;
+      margin: 0 auto;
+    }
+    button {
+      padding: 0.8rem 1.5rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background-color 0.2s;
+    }
+    .btn-gps {
+      background-color: #28a745;
+      color: white;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .btn-gps:hover { background-color: #218838; }
+    .btn-manual {
+      background-color: #007bff;
+      color: white;
+      width: 100%;
+    }
+    .btn-manual:hover { background-color: #0056b3; }
+    .divider {
+      margin: 1.5rem 0;
+      border-bottom: 1px solid #e0e0e0;
+      position: relative;
+    }
+    .divider span {
+      background: #fff;
+      padding: 0 10px;
+      position: relative;
+      top: -10px;
+      color: #777;
+      font-size: 0.9rem;
+    }
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 1rem;
+    }
+    input[type="text"] {
+      padding: 0.75rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 1rem;
+    }
+    .input-city { flex: 2; }
+    .input-state { flex: 1; text-transform: uppercase; }
+    #status {
+      margin-top: 1.5rem;
+      font-weight: bold;
+      font-size: 1rem;
+      color: #333;
+    }
   </style>
 </head>
 <body>
-  <h2>Update Technician Location</h2>
-  <button onclick="sendLocation()">Update My Location</button>
-  <p id="status"></p>
+
+  <div class="card">
+    <h2>Technician Location Control</h2>
+    
+    <!-- Option 1: Automatic GPS Detection -->
+    <button class="btn-gps" onclick="sendGpsLocation()">Use Phone GPS (Auto)</button>
+
+    <div class="divider"><span>OR MANUAL OVERRIDE</span></div>
+
+    <!-- Option 2: Manual City & State Entry -->
+    <div class="input-group">
+      <input type="text" id="manualCity" class="input-city" placeholder="City (e.g. Joliet)" />
+      <input type="text" id="manualState" class="input-state" placeholder="State" maxlength="2" />
+    </div>
+    <button class="btn-manual" onclick="sendManualLocation()">Set Location Manually</button>
+
+    <p id="status"></p>
+  </div>
 
   <script>
     const FIREBASE_URL = "https://tuckertotalrvtechlocator-default-rtdb.firebaseio.com/location.json";
 
-    // Haversine formula to calculate distance between two GPS points in miles
     function calculateDistance(lat1, lon1, lat2, lon2) {
-      const R = 3958.8; // Radius of Earth in miles
+      const R = 3958.8;
       const dLat = (lat2 - lat1) * Math.PI / 180;
       const dLon = (lon2 - lon1) * Math.PI / 180;
       const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
                 Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
                 Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
     }
 
-    function sendLocation() {
+    // 1. AUTO-DETECT GPS LOCATION
+    function sendGpsLocation() {
       const status = document.getElementById("status");
       if (!navigator.geolocation) {
         status.innerText = "Geolocation not supported by browser.";
@@ -49,7 +129,6 @@
             let cityName = "";
             let stateCode = "IL";
 
-            // Query Overpass for places strictly tagged as 'city' or 'town' within ~35 miles (~55,000 meters)
             const overpassQuery = `[out:json][timeout:10];
               (
                 node["place"="city"](around:55000,${lat},${lon});
@@ -65,42 +144,32 @@
             if (overpassRes.ok) {
               const data = await overpassRes.json();
               if (data.elements && data.elements.length > 0) {
-                // Calculate distance to each matched city/town and sort by distance + population
                 const places = data.elements.map(el => {
                   const pLat = el.lat || (el.center ? el.center.lat : 0);
                   const pLon = el.lon || (el.center ? el.center.lon : 0);
-                  const distance = calculateDistance(lat, lon, pLat, pLon);
-                  const pop = parseInt(el.tags.population || "0", 10);
-                  const isMajorCity = el.tags.place === "city";
                   return {
                     name: el.tags.name,
-                    distance: distance,
-                    population: pop,
-                    isCity: isMajorCity
+                    distance: calculateDistance(lat, lon, pLat, pLon),
+                    isCity: el.tags.place === "city"
                   };
                 });
 
-                // Filter out townships or non-city labels
                 const validCities = places.filter(p => 
                   p.name && 
                   !p.name.toLowerCase().includes("township") && 
                   !p.name.toLowerCase().includes("county")
                 );
 
-                // Sort primarily by closest distance, prioritizing 'city' tags or higher population
                 validCities.sort((a, b) => {
                   if (a.isCity && !b.isCity) return -1;
                   if (!a.isCity && b.isCity) return 1;
                   return a.distance - b.distance;
                 });
 
-                if (validCities.length > 0) {
-                  cityName = validCities[0].name;
-                }
+                if (validCities.length > 0) cityName = validCities[0].name;
               }
             }
 
-            // Fallback: If Overpass is busy, query BigDataCloud for State Code and City fallback
             const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
             const geoData = await geoRes.json();
 
@@ -108,40 +177,86 @@
               stateCode = geoData.principalSubdivisionCode.replace('US-', '');
             }
 
-            if (!cityName) {
-              cityName = geoData.city || "Joliet";
-            }
+            if (!cityName) cityName = geoData.city || "Joliet";
 
-            const locationString = `${cityName}, ${stateCode}`;
-            status.innerText = `Updating database to: ${locationString}...`;
-
-            const payload = {
-              city: locationString,
-              lat: lat,
-              lon: lon,
-              timestamp: new Date().toISOString()
-            };
-
-            const fbRes = await fetch(FIREBASE_URL, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload)
-            });
-
-            if (fbRes.ok) {
-              status.innerText = `Success! Location set to: ${locationString}`;
-            } else {
-              status.innerText = `Firebase Error: ${fbRes.status} ${fbRes.statusText}`;
-            }
+            saveToFirebase(cityName, stateCode, lat, lon, "gps");
           } catch (err) {
             status.innerText = "Error: " + err.message;
-            console.error(err);
           }
         },
         (err) => { status.innerText = "GPS Permission Error: " + err.message; },
         { enableHighAccuracy: true, timeout: 15000 }
       );
     }
+
+    // 2. MANUAL LOCATION ENTRY (LOOKS UP REAL GPS FOR SEO DATA)
+    async function sendManualLocation() {
+      const status = document.getElementById("status");
+      const cityInput = document.getElementById("manualCity").value.trim();
+      const stateInput = document.getElementById("manualState").value.trim().toUpperCase();
+
+      if (!cityInput || !stateInput) {
+        status.innerText = "Please enter both a City and a 2-letter State code.";
+        return;
+      }
+
+      status.innerText = `Fetching coordinates for ${cityInput}, ${stateInput}...`;
+
+      try {
+        // Forward geocode city/state to obtain exact lat/lon for SEO metadata
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&q=${encodeURIComponent(cityInput)},+${encodeURIComponent(stateInput)}&limit=1`);
+        const searchRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&city=${encodeURIComponent(cityInput)}&state=${encodeURIComponent(stateInput)}&country=USA&limit=1`);
+        const searchData = await searchRes.json();
+
+        let lat = null;
+        let lon = null;
+
+        if (searchData && searchData.length > 0) {
+          lat = parseFloat(searchData[0].lat);
+          lon = parseFloat(searchData[0].lon);
+        }
+
+        saveToFirebase(cityInput, stateInput, lat, lon, "manual");
+      } catch (err) {
+        status.innerText = "Error resolving city coordinates: " + err.message;
+      }
+    }
+
+    // 3. WRITE UNIFIED PAYLOAD TO FIREBASE
+    async function saveToFirebase(city, state, lat, lon, mode) {
+      const status = document.getElementById("status");
+      const locationString = `${city}, ${state}`;
+
+      status.innerText = `Updating database to: ${locationString}...`;
+
+      // SEO & Schema Compatible Payload
+      const payload = {
+        city: locationString,
+        cityName: city,
+        stateCode: state,
+        lat: lat,
+        lon: lon,
+        source: mode,
+        timestamp: new Date().toISOString()
+      };
+
+      try {
+        const fbRes = await fetch(FIREBASE_URL, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (fbRes.ok) {
+          status.innerText = `Success! Set to: ${locationString} (${mode.toUpperCase()})`;
+        } else {
+          status.innerText = `Firebase Error: ${fbRes.status} ${fbRes.statusText}`;
+        }
+      } catch (err) {
+        status.innerText = "Firebase Error: " + err.message;
+      }
+    }
   </script>
+
 </body>
 </html>
